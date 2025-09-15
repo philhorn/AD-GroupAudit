@@ -32,6 +32,37 @@ function Log-Error {
     }
     $entry | Export-Csv -Path $logPath -Append -NoTypeInformation
 }
+function Ensure-FreshCache {
+    param (
+        [string]$ScriptRoot,
+        [switch]$FromGUI
+    )
+
+    if (-not $Global:CacheTimestamp -or ((Get-Date) - $Global:CacheTimestamp).TotalHours -gt $Global:CacheTimeoutHours) {
+        . "$ScriptRoot\Cache.ps1"
+        $refreshedAt = Get-Date -Format "yyyy-MM-dd HH:mm"
+
+        if ($FromGUI) {
+            try {
+                Add-Type -AssemblyName System.Windows.Forms
+                $form = [System.Windows.Forms.Application]::OpenForms[0]
+                $statusBox = $form.Controls | Where-Object { $_ -is [System.Windows.Forms.RichTextBox] }
+                if ($statusBox) {
+                    $statusBox.SelectionStart = $statusBox.TextLength
+                    $statusBox.SelectionColor = [System.Drawing.Color]::Green
+                    $statusBox.AppendText("[OK] Cache refreshed at $refreshedAt`r`n")
+                    $statusBox.SelectionColor = $statusBox.ForeColor
+                }
+            } catch {
+                Write-Host "[Warning] GUI logging failed. Falling back to console."
+                Write-Host "[OK] Cache refreshed at $refreshedAt"
+            }
+        } else {
+            Write-Host "[OK] Cache refreshed at $refreshedAt"
+        }
+    }
+}
+
 
 function Get-InheritedGroups {
     param ($OU)

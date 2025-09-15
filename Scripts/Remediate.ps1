@@ -1,9 +1,12 @@
 param (
-    [switch]$DryRun
+    [switch]$DryRun,
+    [switch]$FromGUI
 )
 
 . "$PSScriptRoot\Common.ps1"
 . "$PSScriptRoot\Cache.ps1"
+
+Ensure-FreshCache -ScriptRoot $PSScriptRoot -FromGUI:$FromGUI
 
 $reportPath = ".\Reports\AD_GroupAudit_Report.csv"
 if (-not (Test-Path $reportPath)) {
