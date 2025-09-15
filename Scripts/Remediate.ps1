@@ -1,31 +1,33 @@
+# Remediate.ps1
 param (
     [switch]$DryRun
 )
 
-Import-Module ActiveDirectory
-. .\Scripts\Common.ps1
+. "$PSScriptRoot\Common.ps1"
+. "$PSScriptRoot\Cache.ps1"
 
-$errorLog = @()
-$input = Import-Csv ".\Reports\AD_GroupAudit_Report.csv"
+$reportPath = ".\Reports\AD_GroupAudit_Report.csv"
+if (-not (Test-Path $reportPath)) {
+    Log-Error -Context "Remediate" -Target "Audit Report" -Details "Missing audit report"
+    return
+}
 
-foreach ($entry in $input) {
-    $user = $entry.Username
-    $missingGroups = $entry.MissingGroups -split ', ' | ForEach-Object { $_.Trim() }
+$report = Import-Csv $reportPath
 
-    foreach ($group in $missingGroups) {
-        if ($DryRun) {
-            Write-Host "DRY RUN: Would add $user to $group"
-        } else {
-            try {
-                Add-ADGroupMember -Identity $group -Members $user -ErrorAction Stop
-                Write-Host "✅ Added $user to $group"
-            } catch {
-                Log-Error -Context "Add-ADGroupMember" -Target "$user → $group" -Details $_.Exception.Message -ErrorLog ([ref]$errorLog)
-                Write-Warning "⚠️ Failed to add $user to $group"
+foreach ($entry in $report) {
+    $user = Get-ADUser -Identity $entry.User
+    $groups = $entry.MissingGroups -split ",\s*"
+
+    foreach ($groupName in $groups) {
+        try {
+            if ($DryRun) {
+                Write-Host "[DryRun] Would add $($user.SamAccountName) to $groupName"
+            } else {
+                Add-ADGroupMember -Identity $groupName -Members $user
+                Write-Host "[Live] Added $($user.SamAccountName) to $groupName"
             }
+        } catch {
+            Log-Error -Context "Remediate" -Target "$($user.SamAccountName)" -Details $_.Exception.Message
         }
     }
 }
-
-$timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
-$errorLog | Export-Csv ".\Logs\AD_ErrorLog_$timestamp.csv" -NoTypeInformation
