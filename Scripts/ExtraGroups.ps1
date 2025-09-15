@@ -1,3 +1,7 @@
+param (
+    [switch]$FromGUI
+)
+
 # ExtraGroups.ps1
 . "$PSScriptRoot\Common.ps1"
 . "$PSScriptRoot\Cache.ps1"

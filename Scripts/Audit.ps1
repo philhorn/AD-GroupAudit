@@ -1,6 +1,11 @@
-# Audit.ps1
+param (
+    [switch]$FromGUI
+)
+
 . "$PSScriptRoot\Common.ps1"
 . "$PSScriptRoot\Cache.ps1"
+
+Ensure-FreshCache -ScriptRoot $PSScriptRoot -FromGUI:$FromGUI
 
 $results = @()
 

@@ -1,6 +1,19 @@
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
+# === Load Config ===
+$ConfigPath = "$PSScriptRoot\config.json"
+if (Test-Path $ConfigPath) {
+    try {
+        $Config = Get-Content $ConfigPath | ConvertFrom-Json
+        $Global:CacheTimeoutHours = $Config.CacheTimeoutHours
+    } catch {
+        $Global:CacheTimeoutHours = 3
+    }
+} else {
+    $Global:CacheTimeoutHours = 3
+}
+
 # === Main Form ===
 $form = New-Object System.Windows.Forms.Form
 $form.Text = "AD Group Audit Dashboard"
@@ -55,16 +68,74 @@ function LoadCsvIntoGrid($path) {
     }
 }
 
+# === Cache Age Label ===
+$cacheAgeLabel = New-Object System.Windows.Forms.Label
+$cacheAgeLabel.Text = "Cache Age: Unknown"
+$cacheAgeLabel.Location = New-Object System.Drawing.Point(320, 430)
+$cacheAgeLabel.Size = New-Object System.Drawing.Size(300, 20)
+$form.Controls.Add($cacheAgeLabel)
+
+# === Cache Expired Warning Label ===
+$cacheExpiredLabel = New-Object System.Windows.Forms.Label
+$cacheExpiredLabel.Text = ""
+$cacheExpiredLabel.ForeColor = [System.Drawing.Color]::OrangeRed
+$cacheExpiredLabel.Location = New-Object System.Drawing.Point(320, 455)
+$cacheExpiredLabel.Size = New-Object System.Drawing.Size(300, 20)
+$form.Controls.Add($cacheExpiredLabel)
+
+function UpdateCacheAgeLabel {
+    if ($Global:CacheTimestamp) {
+        $ageMinutes = [math]::Round(((Get-Date) - $Global:CacheTimestamp).TotalMinutes / 5) * 5
+        $cacheAgeLabel.Text = "Cache Age: $ageMinutes minutes"
+
+        if (((Get-Date) - $Global:CacheTimestamp).TotalHours -ge $Global:CacheTimeoutHours) {
+            $cacheExpiredLabel.Text = "⚠️ Cache is older than timeout ($Global:CacheTimeoutHours hrs)"
+        } else {
+            $cacheExpiredLabel.Text = ""
+        }
+    } else {
+        $cacheAgeLabel.Text = "Cache Age: Unknown"
+        $cacheExpiredLabel.Text = ""
+    }
+}
+
+# === Editable Timeout Field ===
+$timeoutLabel = New-Object System.Windows.Forms.Label
+$timeoutLabel.Text = "Cache Timeout (hrs):"
+$timeoutLabel.Location = New-Object System.Drawing.Point(650, 430)
+$timeoutLabel.Size = New-Object System.Drawing.Size(130, 20)
+$form.Controls.Add($timeoutLabel)
+
+$timeoutBox = New-Object System.Windows.Forms.TextBox
+$timeoutBox.Text = "$Global:CacheTimeoutHours"
+$timeoutBox.Location = New-Object System.Drawing.Point(780, 428)
+$timeoutBox.Size = New-Object System.Drawing.Size(40, 20)
+$form.Controls.Add($timeoutBox)
+
+$timeoutBox.Add_TextChanged({
+    $newVal = $timeoutBox.Text
+    if ($newVal -match '^\d+(\.\d+)?$') {
+        $Global:CacheTimeoutHours = [double]$newVal
+        $config = @{ CacheTimeoutHours = $Global:CacheTimeoutHours }
+        $config | ConvertTo-Json | Set-Content "$PSScriptRoot\config.json"
+        LogStatus "[OK] Cache timeout updated to $newVal hours." "OK"
+        UpdateCacheAgeLabel
+    } else {
+        LogStatus "[Warning] Invalid timeout value: $newVal" "Warning"
+    }
+})
+
 # === Button Factory ===
-function CreateButton($text, $x, $y, $scriptPath, $csvPath) {
+function CreateButton($text, $x, $y, $scriptPath, $csvPath, $isRemediation = $false) {
     $btn = New-Object System.Windows.Forms.Button
     $btn.Text = $text
     $btn.Size = New-Object System.Drawing.Size(280, 40)
     $btn.Location = New-Object System.Drawing.Point($x, $y)
     $btn.Add_Click({
         LogStatus "[Running] $text started..."
+        $dryRunFlag = $dryRunCheckbox.Checked
         $job = Start-Job -ScriptBlock {
-            & $using:scriptPath
+            & "$using:scriptPath" -DryRun:$using:dryRunFlag
         }
 
         $timer = New-Object System.Windows.Forms.Timer
@@ -75,7 +146,17 @@ function CreateButton($text, $x, $y, $scriptPath, $csvPath) {
                 Receive-Job $job | Out-Null
                 Remove-Job $job
                 LogStatus "[OK] $text complete." "OK"
-                if ($csvPath) { LoadCsvIntoGrid $csvPath }
+
+                if ($isRemediation -and $dryRunFlag) {
+                    $latestDryRun = Get-ChildItem ".\Logs\AD_DryRun_*.csv" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+                    if ($latestDryRun) {
+                        LoadCsvIntoGrid $latestDryRun.FullName
+                        LogStatus "[OK] Dry run preview loaded: $($latestDryRun.Name)" "OK"
+                    }
+                } elseif ($csvPath) {
+                    LoadCsvIntoGrid $csvPath
+                }
+                UpdateCacheAgeLabel
             }
         })
         $timer.Start()
@@ -86,17 +167,7 @@ function CreateButton($text, $x, $y, $scriptPath, $csvPath) {
 # === Buttons ===
 CreateButton "Run Audit" 20 60 ".\Scripts\Audit.ps1" "Reports\AD_GroupAudit_Report.csv"
 CreateButton "Run Extra Groups Report" 20 110 ".\Scripts\ExtraGroups.ps1" "Reports\AD_ExtraGroups_Report.csv"
-CreateButton "Run Remediation" 20 160 ".\Scripts\Remediate.ps1 -DryRun:$($dryRunCheckbox.Checked)" {
-    if ($dryRunCheckbox.Checked) {
-        $latestDryRun = Get-ChildItem ".\Logs\AD_DryRun_*.csv" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-        if ($latestDryRun) {
-            LoadCsvIntoGrid $latestDryRun.FullName
-            LogStatus "[OK] Dry run preview loaded: $($latestDryRun.Name)" "OK"
-        }
-    } else {
-        LoadCsvIntoGrid "Reports\AD_GroupAudit_Report.csv"
-    }
-}
+CreateButton "Run Remediation" 20 160 ".\Scripts\Remediate.ps1" "Reports\AD_GroupAudit_Report.csv" $true
 CreateButton "Compare Reports" 20 210 ".\Scripts\CompareReports.ps1" "Reports\AD_GroupAudit_Changes.csv"
 
 # === Error Log Viewer ===
@@ -114,6 +185,28 @@ $logButton.Add_Click({
     }
 })
 $form.Controls.Add($logButton)
+
+# === Refresh AD Cache Button ===
+$refreshButton = New-Object System.Windows.Forms.Button
+$refreshButton.Text = "Refresh AD Data"
+$refreshButton.Size = New-Object System.Drawing.Size(280, 40)
+$refreshButton.Location = New-Object System.Drawing.Point(20, 310)
+$refreshButton.Add_Click({
+    LogStatus "[Running] Refreshing AD cache..."
+    . "$PSScriptRoot\Scripts\Cache.ps1"
+    UpdateCacheAgeLabel
+    LogStatus "[OK] AD cache refreshed." "OK"
+})
+$form.Controls.Add($refreshButton)
+
+# === Timer to Auto-Update Cache Age Label Every 10 Minutes ===
+$ageTimer = New-Object System.Windows.Forms.Timer
+$ageTimer.Interval = 600000
+$ageTimer.Add_Tick({ UpdateCacheAgeLabel })
+$ageTimer.Start()
+
+# === Initial Cache Age Update ===
+UpdateCacheAgeLabel
 
 # === Launch GUI ===
 [void]$form.ShowDialog()
