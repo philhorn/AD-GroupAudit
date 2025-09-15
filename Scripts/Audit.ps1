@@ -1,41 +1,29 @@
-Import-Module ActiveDirectory
-. .\Scripts\Common.ps1
+# Audit.ps1
+. "$PSScriptRoot\Common.ps1"
+. "$PSScriptRoot\Cache.ps1"
 
-$errorLog = @()
-$report = @()
-$OUs = Get-ADOrganizationalUnit -Filter * -Properties Description
+$results = @()
 
-foreach ($OU in $OUs) {
-    $requiredGroups = Get-InheritedGroups -OU $OU.DistinguishedName
-    try {
-        $users = Get-ADUser -Filter * -SearchBase $OU.DistinguishedName -SearchScope OneLevel -Properties MemberOf
-    } catch {
-        Log-Error -Context "Get-ADUser" -Target $OU.DistinguishedName -Details $_.Exception.Message -ErrorLog ([ref]$errorLog)
-        continue
+foreach ($user in $UserCache) {
+    $userDN = $user.DistinguishedName
+    $userGroups = $user.MemberOf | ForEach-Object {
+        if ($GroupCache.ContainsKey($_)) {
+            $GroupCache[$_].Name
+        }
     }
 
-    foreach ($user in $users) {
-        try {
-            $userGroups = ($user.MemberOf | ForEach-Object {
-                (Get-ADGroup -Identity $_).Name
-            }) | Sort-Object -Unique
-        } catch {
-            Log-Error -Context "Get-ADGroup" -Target $user.SamAccountName -Details $_.Exception.Message -ErrorLog ([ref]$errorLog)
-            continue
-        }
+    $ou = ($OUCache[$userDN] -as [Microsoft.ActiveDirectory.Management.ADOrganizationalUnit])
+    $requiredGroups = Get-InheritedGroups $ou
 
-        $missingGroups = $requiredGroups | Where-Object { $_ -notin $userGroups }
+    $missing = $requiredGroups | Where-Object { $_ -notin $userGroups }
 
-        if ($missingGroups.Count -gt 0) {
-            $report += [PSCustomObject]@{
-                Username      = $user.SamAccountName
-                OU            = $OU.DistinguishedName
-                MissingGroups = ($missingGroups -join ', ')
-            }
+    if ($missing.Count -gt 0) {
+        $results += [PSCustomObject]@{
+            User             = $user.SamAccountName
+            OU               = $ou.Name
+            MissingGroups    = ($missing -join ", ")
         }
     }
 }
 
-$report | Export-Csv ".\Reports\AD_GroupAudit_Report.csv" -NoTypeInformation
-$timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
-$errorLog | Export-Csv ".\Logs\AD_ErrorLog_$timestamp.csv" -NoTypeInformation
+$results | Export-Csv -Path ".\Reports\AD_GroupAudit_Report.csv" -NoTypeInformation
