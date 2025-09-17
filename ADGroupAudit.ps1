@@ -7,6 +7,23 @@ $logsDir = "$PSScriptRoot\Logs"
 if (-not (Test-Path $reportsDir)) { New-Item -ItemType Directory -Path $reportsDir | Out-Null }
 if (-not (Test-Path $logsDir))    { New-Item -ItemType Directory -Path $logsDir    | Out-Null }
 
+# === Load Cachce ===
+$cacheFile = "$PSScriptRoot\Cache\AD_Cache.json"
+if (Test-Path $cacheFile) {
+    try {
+        $cacheObj = Get-Content $cacheFile | ConvertFrom-Json
+        $Global:CacheTimestamp = [datetime]$cacheObj.Timestamp
+        $Global:OUCache = $cacheObj.OUs
+    } catch {
+        $Global:CacheTimestamp = $null
+        $Global:OUCache = @()
+        LogStatus "[Error] Failed to load cache: $($_.Exception.Message)" "Error"
+    }
+} else {
+    $Global:CacheTimestamp = $null
+    $Global:OUCache = @()
+}
+
 # === Load Config ===
 $ConfigPath = "$PSScriptRoot\config.json"
 if (Test-Path $ConfigPath) {
@@ -236,10 +253,6 @@ if (-not $Global:CacheTimestamp -or ((Get-Date) - $Global:CacheTimestamp).TotalH
 }
 
 # === Buttons ===
-#$runAuditBtn        = CreateButton "Run Audit" 20 60 "$PSScriptRoot Scripts\Audit.ps1" "$reportsDir\AD_GroupAudit_Report.csv"
-#$extraGroupsBtn     = CreateButton "Run Extra Groups Report" 20 110 "$PSScriptRoot\Scripts\ExtraGroups.ps1" "$reportsDir\AD_ExtraGroups_Report.csv"
-#$remediationBtn     = CreateButton "Run Remediation" 20 160 "$PSScriptRoot\Scripts\Remediate.ps1" "$reportsDir\AD_GroupAudit_Report.csv" $true
-#$compareReportsBtn  = CreateButton "Compare Reports" 20 210 "$PSScriptRoot\Scripts\CompareReports.ps1" "$reportsDir\AD_GroupAudit_Changes.csv"
 
 # Disable action buttons if cache is expired or missing
 $cacheIsFresh = $Global:CacheTimestamp -and ((Get-Date) - $Global:CacheTimestamp).TotalHours -le $Global:CacheTimeoutHours
@@ -344,6 +357,24 @@ if (-not $Global:CacheTimestamp -or ((Get-Date) - $Global:CacheTimestamp).TotalH
     LogStatus "[Info] No valid AD cache found. Refreshing now... Cache.ps1 invoked at $(Get-Date -Format 'HH:mm:ss')" "Info"
 
     . "$PSScriptRoot\Scripts\Cache.ps1"
+
+    # Reload the cache from file after refresh
+    if (Test-Path $cacheFile) {
+        try {
+            $cacheObj = Get-Content $cacheFile | ConvertFrom-Json
+            $Global:CacheTimestamp = [datetime]$cacheObj.Timestamp
+            $Global:OUCache = $cacheObj.OUs
+        } catch {
+            $Global:CacheTimestamp = $null
+            $Global:OUCache = @()
+            LogStatus "[Error] Failed to load cache after refresh: $($_.Exception.Message)" "Error"
+        }
+    } else {
+        $Global:CacheTimestamp = $null
+        $Global:OUCache = @()
+        LogStatus "[Error] Cache file missing after refresh." "Error"
+    }
+
     UpdateCacheAgeLabel
     LogStatus "[OK] AD cache refreshed on first launch."
 

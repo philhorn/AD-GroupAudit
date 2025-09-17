@@ -60,10 +60,26 @@ function Test-CacheFreshness {
     }
 }
 
+
 function Get-InheritedGroups {
-    param ($OU)
-    if ($OU.Description -and $OU.Description.Contains(":")) {
-        return $OU.Description.Split(":")[1].Split(",").Trim()
+    param (
+        [string]$ouDn,
+        $ouCache
+    )
+    $groups = @()
+    $currentDn = $ouDn
+    while ($currentDn) {
+        $ou = $ouCache | Where-Object { $_.DistinguishedName -eq $currentDn }
+        if ($ou -and $ou.Description -and $ou.Description.Contains(":")) {
+            $descGroups = $ou.Description.Split(":")[1].Split(",").Trim()
+            $groups += $descGroups
+        }
+        # Move up to parent OU
+        if ($currentDn -match '^OU=[^,]+,(.+)$') {
+            $currentDn = $matches[1]
+        } else {
+            $currentDn = $null
+        }
     }
-    return @()
+    return $groups | Where-Object { $_ -ne "" } | Select-Object -Unique
 }
