@@ -16,23 +16,20 @@
 
 # Common.ps1
 
-function Log-Error {
+function Write-ErrorLog {
     param (
-        [string]$Context,
-        [string]$Target,
-        [string]$Details
+        [string]$Message,
+        [string]$LogPath = "$PSScriptRoot\Logs\AD_ErrorLog.csv"
     )
-    $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
-    $logPath = ".\Logs\AD_ErrorLog_$timestamp.csv"
+
     $entry = [PSCustomObject]@{
-        Timestamp = Get-Date
-        Context   = $Context
-        Target    = $Target
-        Details   = $Details
+        Timestamp = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
+        Message   = $Message
     }
-    $entry | Export-Csv -Path $logPath -Append -NoTypeInformation
+
+    $entry | Export-Csv -Path $LogPath -Append -NoTypeInformation
 }
-function Ensure-FreshCache {
+function Test-CacheFreshness {
     param (
         [string]$ScriptRoot,
         [switch]$FromGUI
@@ -62,7 +59,6 @@ function Ensure-FreshCache {
         }
     }
 }
-
 
 function Get-InheritedGroups {
     param ($OU)

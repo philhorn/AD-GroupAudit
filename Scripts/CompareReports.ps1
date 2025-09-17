@@ -7,7 +7,7 @@ param (
 . "$PSScriptRoot\Cache.ps1"
 
 # === Ensure Cache Is Fresh ===
-Ensure-FreshCache -ScriptRoot $PSScriptRoot -FromGUI:$FromGUI
+Test-CacheFreshness -ScriptRoot $PSScriptRoot -FromGUI:$FromGUI
 
 # === Load Previous and Current Reports ===
 $previousReport = "$PSScriptRoot\Reports\AD_GroupAudit_Previous.csv"

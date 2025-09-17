@@ -6,11 +6,11 @@ param (
 . "$PSScriptRoot\Common.ps1"
 . "$PSScriptRoot\Cache.ps1"
 
-Ensure-FreshCache -ScriptRoot $PSScriptRoot -FromGUI:$FromGUI
+Test-CacheFreshness -ScriptRoot $PSScriptRoot -FromGUI:$FromGUI
 
 $reportPath = ".\Reports\AD_GroupAudit_Report.csv"
 if (-not (Test-Path $reportPath)) {
-    Log-Error -Context "Remediate" -Target "Audit Report" -Details "Missing audit report"
+    Write-ErrorLog -Context "Remediate" -Target "Audit Report" -Details "Missing audit report"
     return
 }
 
@@ -42,7 +42,7 @@ foreach ($entry in $report) {
                 Write-Host "[Live] Added $($user.SamAccountName) to $groupName"
             }
         } catch {
-            Log-Error -Context "Remediate" -Target "$($user.SamAccountName)" -Details $_.Exception.Message
+            Write-ErrorLog -Context "Remediate" -Target "$($user.SamAccountName)" -Details $_.Exception.Message
         }
     }
 }

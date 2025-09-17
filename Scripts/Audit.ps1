@@ -1,11 +1,9 @@
-param (
-    [switch]$FromGUI
-)
-
+# In Scripts/Audit.ps1
 . "$PSScriptRoot\Common.ps1"
-. "$PSScriptRoot\Cache.ps1"
+$logPath = "$PSScriptRoot\..\Logs\AD_ErrorLog.csv"
+Write-Host "Running Audit. DryRun: $DryRun FromGUI: $FromGUI"
 
-Ensure-FreshCache -ScriptRoot $PSScriptRoot -FromGUI:$FromGUI
+Test-CacheFreshness -ScriptRoot $PSScriptRoot -FromGUI:$FromGUI
 
 $results = @()
 

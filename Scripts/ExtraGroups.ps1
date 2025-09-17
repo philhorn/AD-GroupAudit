@@ -6,6 +6,8 @@ param (
 . "$PSScriptRoot\Common.ps1"
 . "$PSScriptRoot\Cache.ps1"
 
+Test-CacheFreshness -ScriptRoot $PSScriptRoot -FromGUI:$FromGUI
+
 $results = @()
 
 foreach ($user in $UserCache) {
