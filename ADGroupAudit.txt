@@ -1,12 +1,6 @@
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
-# === Ensure Reports and Logs Directories Exist ===
-$reportsDir = "$PSScriptRoot\Reports"
-$logsDir = "$PSScriptRoot\Logs"
-if (-not (Test-Path $reportsDir)) { New-Item -ItemType Directory -Path $reportsDir | Out-Null }
-if (-not (Test-Path $logsDir))    { New-Item -ItemType Directory -Path $logsDir    | Out-Null }
-
 # === Load Config ===
 $ConfigPath = "$PSScriptRoot\config.json"
 if (Test-Path $ConfigPath) {
@@ -42,33 +36,19 @@ $form.Controls.Add($statusBox)
 
 function LogStatus {
     param (
-        [string]$Message
+        [string]$Message,
+        [string]$Type = "Info"  # Info, OK, Error, Warning
     )
-
-    # Default tag
-    $tag = "Info"
-
-    # Extract tag from message (e.g., [OK], [Error], etc.)
- if ($Message -match '^\[(\w+)\]') {
-    $tag = $matches[1]
-}
-
-    # Map tag to color
-    $color = switch ($tag) {
+    $color = switch ($Type) {
         "OK"      { "Green" }
         "Error"   { "Red" }
         "Warning" { "Orange" }
-        "Debug"   { "Gray" }
-        "Audit"   { "Blue" }
         default   { "Black" }
     }
 
-    # Optional: Add timestamp
-    $timestamp = Get-Date -Format "HH:mm:ss"
-
     $statusBox.SelectionStart = $statusBox.TextLength
     $statusBox.SelectionColor = [System.Drawing.Color]::$color
-    $statusBox.AppendText("[$timestamp] $Message`r`n")
+    $statusBox.AppendText("$Message`r`n")
     $statusBox.SelectionColor = $statusBox.ForeColor
 }
 
@@ -102,10 +82,6 @@ $cacheExpiredLabel.ForeColor = [System.Drawing.Color]::OrangeRed
 $cacheExpiredLabel.Location = New-Object System.Drawing.Point(320, 455)
 $cacheExpiredLabel.Size = New-Object System.Drawing.Size(300, 20)
 $form.Controls.Add($cacheExpiredLabel)
-
-# === Global Job and Timer Variables ===
-$script:ActiveJob = $null
-$script:ActiveTimer = $null
 
 function UpdateCacheAgeLabel {
     if ($Global:CacheTimestamp) {
@@ -151,17 +127,6 @@ $timeoutBox.Add_TextChanged({
 
 # === Button Factory ===
 function CreateButton($text, $x, $y, $scriptPath, $csvPath, $isRemediation = $false) {
-    if (-not $scriptPath -or $scriptPath -eq "") {
-        LogStatus "[Error] No script path provided for '$text' button." "Error"
-        return
-    }
-    $fullScriptPath = if ([System.IO.Path]::IsPathRooted($scriptPath)) {
-        $scriptPath
-    } else {
-        Join-Path $PSScriptRoot $scriptPath
-    }
-    LogStatus "[Debug] Full script path resolved: $fullScriptPath" "Debug"
-
     $btn = New-Object System.Windows.Forms.Button
     $btn.Text = $text
     $btn.Size = New-Object System.Drawing.Size(280, 40)
@@ -169,67 +134,46 @@ function CreateButton($text, $x, $y, $scriptPath, $csvPath, $isRemediation = $fa
     $btn.Add_Click({
         LogStatus "[Running] $text started..."
         $dryRunFlag = $dryRunCheckbox.Checked
-
-        # Use full path for script
-        $fullScriptPath = if ([System.IO.Path]::IsPathRooted($scriptPath)) {
-            $scriptPath
-        } else {
-            Join-Path $PSScriptRoot $scriptPath
+        $job = Start-Job -ScriptBlock {
+            & "$using:scriptPath" -DryRun:$using:dryRunFlag -FromGUI
         }
-        Write-Host "Launching job with script path: $fullScriptPath"
 
-        $script:ActiveJob = Start-Job -ScriptBlock {
-            param($path, $dryRun)
-            Write-Host "Job running with script path: $path"
-            if (Test-Path $path) {
-                & $path -DryRun:$dryRun -FromGUI
-                Write-Host "Job completed: $path"
-            } else {
-                Write-Host "[Error] Script not found: $path"
-            }
-        } -ArgumentList $fullScriptPath, $dryRunFlag
-
-        if (-not $script:ActiveJob) {
+        if (-not $job) {
             LogStatus "[Error] Failed to start background job for $text." "Error"
             return
         }
 
-        $script:ActiveTimer = New-Object System.Windows.Forms.Timer
-        $script:ActiveTimer.Interval = 1000
-        $script:ActiveTimer.Add_Tick({
-            try {
-                if ($script:ActiveJob -and $script:ActiveJob.State -ne 'Running') {
-                    $script:ActiveTimer.Stop()
-                    if ($script:ActiveJob -and (Get-Job -Id $script:ActiveJob.Id -ErrorAction SilentlyContinue)) {
-                        Receive-Job $script:ActiveJob | Out-Null
-                        Remove-Job $script:ActiveJob -Force -ErrorAction SilentlyContinue
+        $timer = New-Object System.Windows.Forms.Timer
+        $timer.Interval = 1000
+        $timer.Add_Tick({
+            if ($job -and $job.State -ne 'Running') {
+                $timer.Stop()
+                Receive-Job $job | Out-Null
+                Remove-Job $job
+                LogStatus "[OK] $text complete." "OK"
+            
+                if ($isRemediation -and $dryRunFlag) {
+                    $latestDryRun = Get-ChildItem ".\Logs\AD_DryRun_*.csv" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+                    if ($latestDryRun) {
+                        LoadCsvIntoGrid $latestDryRun.FullName
+                        LogStatus "[OK] Dry run preview loaded: $($latestDryRun.Name)" "OK"
                     }
-                    LogStatus "[OK] $text complete." "OK"
-
-                    if ($isRemediation -and $dryRunFlag) {
-                        $latestDryRun = Get-ChildItem "$logsDir\AD_DryRun_*.csv" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-                        if ($latestDryRun) {
-                            LoadCsvIntoGrid $latestDryRun.FullName
-                            LogStatus "[OK] Dry run preview loaded: $($latestDryRun.Name)" "OK"
-                        }
-                    } elseif ($csvPath) {
-                        LoadCsvIntoGrid $csvPath
-                    }
-                    UpdateCacheAgeLabel
+                } elseif ($csvPath) {
+                    LoadCsvIntoGrid $csvPath
                 }
-            } catch {
-                LogStatus "[Error] Timer tick failed: $($_.Exception.Message)" "Error"
+                UpdateCacheAgeLabel
             }
         })
-        $script:ActiveTimer.Start()
+        $timer.Start()
     })
     $form.Controls.Add($btn)
 }
 
 # === Load Cache and Check Freshness ===
+. "$PSScriptRoot\Scripts\Cache.ps1"
 
 if (-not $Global:CacheTimestamp -or ((Get-Date) - $Global:CacheTimestamp).TotalHours -gt $Global:CacheTimeoutHours) {
-    $cacheAgeLabel.Text = "Cache Age: Unknown or Expired"
+    $labelCacheAge.Text = "Cache Age: Unknown or Expired"
     LogStatus "[Warning] No valid AD cache found. Please refresh before running reports." "Warning"
 
     # Disable all action buttons
@@ -242,10 +186,11 @@ if (-not $Global:CacheTimestamp -or ((Get-Date) - $Global:CacheTimestamp).TotalH
 }
 
 # === Buttons ===
-CreateButton "Run Audit" 20 60 "Scripts\Audit.ps1" "$reportsDir\AD_GroupAudit_Report.csv"
-CreateButton "Run Extra Groups Report" 20 110 "Scripts\ExtraGroups.ps1" "$reportsDir\AD_ExtraGroups_Report.csv"
-CreateButton "Run Remediation" 20 160 "Scripts\Remediate.ps1" "$reportsDir\AD_GroupAudit_Report.csv" $true
-CreateButton "Compare Reports" 20 210 "Scripts\CompareReports.ps1" "$reportsDir\AD_GroupAudit_Changes.csv"
+$refreshButton = CreateButton "Refresh AD Cache" 20 10 ".\Scripts\Cache.ps1" $null
+CreateButton "Run Audit" 20 60 ".\Scripts\Audit.ps1" "Reports\AD_GroupAudit_Report.csv"
+CreateButton "Run Extra Groups Report" 20 110 ".\Scripts\ExtraGroups.ps1" "Reports\AD_ExtraGroups_Report.csv"
+CreateButton "Run Remediation" 20 160 ".\Scripts\Remediate.ps1" "Reports\AD_GroupAudit_Report.csv" $true
+CreateButton "Compare Reports" 20 210 ".\Scripts\CompareReports.ps1" "Reports\AD_GroupAudit_Changes.csv"
 
 # === Error Log Viewer ===
 $logButton = New-Object System.Windows.Forms.Button
@@ -253,7 +198,7 @@ $logButton.Text = "View Latest Error Log"
 $logButton.Size = New-Object System.Drawing.Size(280, 40)
 $logButton.Location = New-Object System.Drawing.Point(20, 260)
 $logButton.Add_Click({
-    $latestLog = Get-ChildItem "$logsDir\AD_ErrorLog_*.csv" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+    $latestLog = Get-ChildItem ".\Logs\AD_ErrorLog_*.csv" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
     if ($latestLog) {
         LoadCsvIntoGrid $latestLog.FullName
         LogStatus "[Log] Loaded error log: $($latestLog.Name)" "OK"
@@ -269,39 +214,22 @@ $refreshButton.Text = "Refresh AD Data"
 $refreshButton.Size = New-Object System.Drawing.Size(280, 40)
 $refreshButton.Location = New-Object System.Drawing.Point(20, 310)
 $refreshButton.Add_Click({
-    LogStatus "[Info] Refreshing AD cache..." "Info"
+$statusLabel.Text = "Refreshing AD cache..."
+$statusLabel.ForeColor = [System.Drawing.Color]::Orange
 
-    try {
-        . "$PSScriptRoot\Scripts\Cache.ps1"
-        UpdateCacheAgeLabel
-        LogStatus "[OK] AD cache is refreshed and up to date."
+LogStatus "[Running] Refreshing AD cache..."
+. "$PSScriptRoot\Scripts\Cache.ps1"
+UpdateCacheAgeLabel
+LogStatus "[OK] AD cache refreshed." "OK"
 
-        $form.Controls | Where-Object { $_ -is [System.Windows.Forms.Button] } | ForEach-Object {
-            $_.Enabled = $true
-        }
-    } catch {
-        LogStatus "[Error] Cache refresh failed: $($_.Exception.Message)" "Error"
-        $statusLabel.Text = "Refresh failed."
-        $statusLabel.ForeColor = [System.Drawing.Color]::Red
+$statusLabel.Text = "AD cache is up to date."
+$statusLabel.ForeColor = [System.Drawing.Color]::Green
+
+    # Re-enable all buttons after successful refresh
+    $form.Controls | Where-Object { $_ -is [System.Windows.Forms.Button] } | ForEach-Object {
+        $_.Enabled = $true
     }
 })
-$form.Controls.Add($refreshButton)
-
-$exitButton = New-Object System.Windows.Forms.Button
-$exitButton.Text = "Exit"
-$exitButton.Size = New-Object System.Drawing.Size(280, 40)
-$exitButton.Location = New-Object System.Drawing.Point(20, 400)
-$exitButton.Add_Click({
-    if ($script:ActiveTimer) { $script:ActiveTimer.Stop() }
-    if ($script:ActiveJob) {
-        try {
-            Receive-Job $script:ActiveJob | Out-Null
-            Remove-Job $script:ActiveJob
-        } catch {}
-    }
-    $form.Close()
-})
-$form.Controls.Add($exitButton)
 
 # === Timer to Auto-Update Cache Age Label Every 10 Minutes ===
 $ageTimer = New-Object System.Windows.Forms.Timer
@@ -319,18 +247,19 @@ $form.Controls.Add($statusLabel)
 UpdateCacheAgeLabel
 
 # === Initial Cache Load and First-Launch Check ===
+. "$PSScriptRoot\Scripts\Cache.ps1"
+
 if (-not $Global:CacheTimestamp -or ((Get-Date) - $Global:CacheTimestamp).TotalHours -gt $Global:CacheTimeoutHours) {
-    $statusLabel.Text = "Initializing AD cache..."
-    $statusLabel.ForeColor = [System.Drawing.Color]::Orange
+$statusLabel.Text = "Initializing AD cache..."
+$statusLabel.ForeColor = [System.Drawing.Color]::Orange
 
-    LogStatus "[Info] No valid AD cache found. Refreshing now... Cache.ps1 invoked at $(Get-Date -Format 'HH:mm:ss')" "Info"
+LogStatus "[Info] No valid AD cache found. Refreshing now..." "Info"
+. "$PSScriptRoot\Scripts\Cache.ps1"
+UpdateCacheAgeLabel
+LogStatus "[OK] AD cache refreshed on first launch." "OK"
 
-    . "$PSScriptRoot\Scripts\Cache.ps1"
-    UpdateCacheAgeLabel
-    LogStatus "[OK] AD cache refreshed on first launch."
-
-    $statusLabel.Text = "AD cache is up to date."
-    $statusLabel.ForeColor = [System.Drawing.Color]::Green
+$statusLabel.Text = "AD cache is up to date."
+$statusLabel.ForeColor = [System.Drawing.Color]::Green
 }
 
 # === Launch GUI ===
