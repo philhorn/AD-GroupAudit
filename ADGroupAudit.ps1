@@ -150,44 +150,37 @@ $timeoutBox.Add_TextChanged({
 })
 
 # === Button Factory ===
-function CreateButton($text, $x, $y, $scriptPath, $csvPath, $isRemediation = $false) {
-    if (-not $scriptPath -or $scriptPath -eq "") {
+function CreateButton($text, $x, $y, $fullScriptPath, $csvPath, $isRemediation = $false) {
+    if (-not $fullScriptPath -or $fullScriptPath -eq "") {
         LogStatus "[Error] No script path provided for '$text' button." "Error"
-        return
-    }
-    $fullScriptPath = if ([System.IO.Path]::IsPathRooted($scriptPath)) {
-        $scriptPath
-    } else {
-        Join-Path $PSScriptRoot $scriptPath
+        Write-Host "[DEBUG] No script path provided for '$text' button."
+        return $null
     }
     LogStatus "[Debug] Full script path resolved: $fullScriptPath" "Debug"
+    Write-Host "[DEBUG] Creating button '$text' with script path: $fullScriptPath"
 
     $btn = New-Object System.Windows.Forms.Button
     $btn.Text = $text
     $btn.Size = New-Object System.Drawing.Size(280, 40)
     $btn.Location = New-Object System.Drawing.Point($x, $y)
+    # Store the path as a property on the button
+    $btn.Tag = $fullScriptPath
+
     $btn.Add_Click({
+        $thisBtn = $this
+        $scriptPath = $thisBtn.Tag
         LogStatus "[Running] $text started..."
         $dryRunFlag = $dryRunCheckbox.Checked
 
-        # Use full path for script
-        $fullScriptPath = if ([System.IO.Path]::IsPathRooted($scriptPath)) {
-            $scriptPath
-        } else {
-            Join-Path $PSScriptRoot $scriptPath
-        }
-        Write-Host "Launching job with script path: $fullScriptPath"
-
         $script:ActiveJob = Start-Job -ScriptBlock {
             param($path, $dryRun)
-            Write-Host "Job running with script path: $path"
+            Write-Host "DEBUG: Job received path: '$path'"
             if (Test-Path $path) {
                 & $path -DryRun:$dryRun -FromGUI
-                Write-Host "Job completed: $path"
             } else {
                 Write-Host "[Error] Script not found: $path"
             }
-        } -ArgumentList $fullScriptPath, $dryRunFlag
+        } -ArgumentList $scriptPath, $dryRunFlag
 
         if (-not $script:ActiveJob) {
             LogStatus "[Error] Failed to start background job for $text." "Error"
@@ -224,6 +217,7 @@ function CreateButton($text, $x, $y, $scriptPath, $csvPath, $isRemediation = $fa
         $script:ActiveTimer.Start()
     })
     $form.Controls.Add($btn)
+    return $btn
 }
 
 # === Load Cache and Check Freshness ===
@@ -242,10 +236,34 @@ if (-not $Global:CacheTimestamp -or ((Get-Date) - $Global:CacheTimestamp).TotalH
 }
 
 # === Buttons ===
-CreateButton "Run Audit" 20 60 "Scripts\Audit.ps1" "$reportsDir\AD_GroupAudit_Report.csv"
-CreateButton "Run Extra Groups Report" 20 110 "Scripts\ExtraGroups.ps1" "$reportsDir\AD_ExtraGroups_Report.csv"
-CreateButton "Run Remediation" 20 160 "Scripts\Remediate.ps1" "$reportsDir\AD_GroupAudit_Report.csv" $true
-CreateButton "Compare Reports" 20 210 "Scripts\CompareReports.ps1" "$reportsDir\AD_GroupAudit_Changes.csv"
+#$runAuditBtn        = CreateButton "Run Audit" 20 60 "$PSScriptRoot Scripts\Audit.ps1" "$reportsDir\AD_GroupAudit_Report.csv"
+#$extraGroupsBtn     = CreateButton "Run Extra Groups Report" 20 110 "$PSScriptRoot\Scripts\ExtraGroups.ps1" "$reportsDir\AD_ExtraGroups_Report.csv"
+#$remediationBtn     = CreateButton "Run Remediation" 20 160 "$PSScriptRoot\Scripts\Remediate.ps1" "$reportsDir\AD_GroupAudit_Report.csv" $true
+#$compareReportsBtn  = CreateButton "Compare Reports" 20 210 "$PSScriptRoot\Scripts\CompareReports.ps1" "$reportsDir\AD_GroupAudit_Changes.csv"
+
+# Disable action buttons if cache is expired or missing
+$cacheIsFresh = $Global:CacheTimestamp -and ((Get-Date) - $Global:CacheTimestamp).TotalHours -le $Global:CacheTimeoutHours
+$runAuditBtn.Enabled        = $cacheIsFresh
+$extraGroupsBtn.Enabled     = $cacheIsFresh
+$remediationBtn.Enabled     = $cacheIsFresh
+$compareReportsBtn.Enabled  = $cacheIsFresh
+
+#######################################
+$auditScriptPath       = Join-Path $PSScriptRoot "Scripts\Audit.ps1"
+$extraGroupsScriptPath = Join-Path $PSScriptRoot "Scripts\ExtraGroups.ps1"
+$remediateScriptPath   = Join-Path $PSScriptRoot "Scripts\Remediate.ps1"
+$compareScriptPath     = Join-Path $PSScriptRoot "Scripts\CompareReports.ps1"
+
+Write-Host "Audit script path: $auditScriptPath"
+Write-Host "ExtraGroups script path: $extraGroupsScriptPath"
+Write-Host "Remediate script path: $remediateScriptPath"
+Write-Host "Compare script path: $compareScriptPath"
+
+$runAuditBtn        = CreateButton "Run Audit" 20 60 $auditScriptPath "$reportsDir\AD_GroupAudit_Report.csv"
+$extraGroupsBtn     = CreateButton "Run Extra Groups Report" 20 110 $extraGroupsScriptPath "$reportsDir\AD_ExtraGroups_Report.csv"
+$remediationBtn     = CreateButton "Run Remediation" 20 160 $remediateScriptPath "$reportsDir\AD_GroupAudit_Report.csv" $true
+$compareReportsBtn  = CreateButton "Compare Reports" 20 210 $compareScriptPath "$reportsDir\AD_GroupAudit_Changes.csv"############################################
+
 
 # === Error Log Viewer ===
 $logButton = New-Object System.Windows.Forms.Button
