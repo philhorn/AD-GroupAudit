@@ -5,6 +5,19 @@ Write-Host "Running Audit. DryRun: $DryRun FromGUI: $FromGUI"
 
 Test-CacheFreshness -ScriptRoot $PSScriptRoot -FromGUI:$FromGUI
 
+# 2. Always reload the cache from file after freshness check
+$cacheFile = "$PSScriptRoot\..\Cache\AD_Cache.json"
+if (Test-Path $cacheFile) {
+    $cacheObj = Get-Content $cacheFile | ConvertFrom-Json
+    $OUCache = $cacheObj.OUs
+    $CacheTimestamp = [datetime]$cacheObj.Timestamp
+} else {
+    Write-Host "[Error] Cache file not found: $cacheFile"
+    exit 1
+}
+
+
+
 $results = @()
 
 foreach ($user in $UserCache) {
@@ -29,4 +42,19 @@ foreach ($user in $UserCache) {
     }
 }
 
-$results | Export-Csv -Path ".\Reports\AD_GroupAudit_Report.csv" -NoTypeInformation
+
+
+
+
+
+$results = @()
+
+# Example: Loop through cached OUs and groups
+foreach ($ouEntry in $OUCache) {
+    $ouName = $ouEntry.OU
+    $groups = $ouEntry.Groups
+    # ...your audit logic here...
+}
+
+# Example output (replace with your real logic)
+$results | Export-Csv -Path "$PSScriptRoot\..\Reports\AD_GroupAudit_Report.csv" -NoTypeInformation
