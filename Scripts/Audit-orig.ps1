@@ -31,11 +31,6 @@ $extraGroupsResults = @()
 
 foreach ($user in $UserCache) {
     $userGroups = @()
-    Write-Host "Auditing user: $($user.SamAccountName)"
-    Write-Host "OU: $($user.OU)"
-    Write-Host "Required Groups: $($requiredGroups -join ', ')"
-    Write-Host "User Groups: $($userGroups -join ', ')"
-
     if ($user.MemberOf) {
         $userGroups = $user.MemberOf | ForEach-Object {
             if ($groupHash.ContainsKey($_)) { $groupHash[$_] }

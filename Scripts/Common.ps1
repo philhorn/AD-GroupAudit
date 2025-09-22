@@ -1,65 +1,25 @@
-# Common.ps1
-#AD_GroupAudit/
-#├── Scripts/
-#│   ├── Audit.ps1
-#│   ├── ExtraGroups.ps1
-#│   ├── Remediate.ps1
-#│   └── CompareReports.ps1
-#│   └── Common.ps1
-#│   └── Cache.ps1
-#├── Logs/
-#│   └── AD_ErrorLog_YYYYMMDD_HHMMSS.csv
-#├── Reports/
-#│   ├── AD_GroupAudit_Report.csv
-#│   ├── AD_ExtraGroups_Report.csv
-#│   └── AD_GroupAudit_Changes.csv
+. "$PSScriptRoot\Common.ps1"
+$logPath = "$PSScriptRoot\..\Logs\AD_ErrorLog.csv"
+Write-Host "Running Audit. DryRun: $DryRun FromGUI: $FromGUI"
 
-# Common.ps1
+Test-CacheFreshness -ScriptRoot $PSScriptRoot -FromGUI:$FromGUI
 
-function Write-ErrorLog {
-    param (
-        [string]$Message,
-        [string]$LogPath = "$PSScriptRoot\Logs\AD_ErrorLog.csv"
-    )
-
-    $entry = [PSCustomObject]@{
-        Timestamp = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
-        Message   = $Message
-    }
-
-    $entry | Export-Csv -Path $LogPath -Append -NoTypeInformation
-}
-function Test-CacheFreshness {
-    param (
-        [string]$ScriptRoot,
-        [switch]$FromGUI
-    )
-
-    if (-not $Global:CacheTimestamp -or ((Get-Date) - $Global:CacheTimestamp).TotalHours -gt $Global:CacheTimeoutHours) {
-        . "$ScriptRoot\Cache.ps1"
-        $refreshedAt = Get-Date -Format "yyyy-MM-dd HH:mm"
-
-        if ($FromGUI) {
-            try {
-                Add-Type -AssemblyName System.Windows.Forms
-                $form = [System.Windows.Forms.Application]::OpenForms[0]
-                $statusBox = $form.Controls | Where-Object { $_ -is [System.Windows.Forms.RichTextBox] }
-                if ($statusBox) {
-                    $statusBox.SelectionStart = $statusBox.TextLength
-                    $statusBox.SelectionColor = [System.Drawing.Color]::Green
-                    $statusBox.AppendText("[OK] Cache refreshed at $refreshedAt`r`n")
-                    $statusBox.SelectionColor = $statusBox.ForeColor
-                }
-            } catch {
-                Write-Host "[Warning] GUI logging failed. Falling back to console."
-                Write-Host "[OK] Cache refreshed at $refreshedAt"
-            }
-        } else {
-            Write-Host "[OK] Cache refreshed at $refreshedAt"
-        }
-    }
+# Reload the cache from file after freshness check
+$cacheFile = "$PSScriptRoot\..\Cache\AD_Cache.json"
+if (Test-Path $cacheFile) {
+    $cacheObj = Get-Content $cacheFile | ConvertFrom-Json
+    $OUCache = $cacheObj.OUs
+    $UserCache = $cacheObj.Users
+    $GroupCache = $cacheObj.Groups
+    $CacheTimestamp = [datetime]$cacheObj.Timestamp
+} else {
+    Write-Host "[Error] Cache file not found: $cacheFile"
+    exit 1
 }
 
+# Build a hashtable for group DN -> group name
+$groupHash = @{}
+foreach ($g in $GroupCache) { $groupHash[$g.DistinguishedName] = $g.Name }
 
 function Get-InheritedGroups {
     param (
@@ -83,3 +43,28 @@ function Get-InheritedGroups {
     }
     return $groups | Where-Object { $_ -ne "" } | Select-Object -Unique
 }
+
+$results = @()
+
+foreach ($user in $UserCache) {
+    $userGroups = @()
+    if ($user.MemberOf) {
+        $userGroups = $user.MemberOf | ForEach-Object {
+            if ($groupHash.ContainsKey($_)) { $groupHash[$_] }
+        }
+    }
+
+    $requiredGroups = Get-InheritedGroups $user.OU $OUCache
+    $missing = $requiredGroups | Where-Object { $_ -and ($_ -notin $userGroups) }
+
+    if ($missing.Count -gt 0) {
+        $ouEntry = $OUCache | Where-Object { $_.DistinguishedName -eq $user.OU }
+        $results += [PSCustomObject]@{
+            User             = $user.SamAccountName
+            OU               = $ouEntry.Name
+            MissingGroups    = ($missing -join ", ")
+        }
+    }
+}
+
+$results | Export-Csv -Path "$PSScriptRoot\..\Reports\AD_GroupAudit_Report.csv" -NoTypeInformation
