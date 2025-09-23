@@ -20,7 +20,7 @@ $userList = Get-ADUser -Filter * -Properties MemberOf, DistinguishedName, SamAcc
     }
 }
 
-# Optionally, get all groups (for lookup)
+# Get all groups (for lookup)
 $groupList = Get-ADGroup -Filter * | Select-Object DistinguishedName, Name
 
 $cacheObj = [PSCustomObject]@{
@@ -30,7 +30,7 @@ $cacheObj = [PSCustomObject]@{
     Groups    = $groupList
 }
 
-$cacheObj | ConvertTo-Json -Depth 5 | Set-Content $cacheFile
+$cacheObj | ConvertTo-Json -Depth 12 | Set-Content $cacheFile
 
 # Save full cache as AD_Cache_Original.json
 $originalCacheFile = "$cacheDir\AD_Cache_Original.json"
@@ -41,6 +41,36 @@ $cacheObj | ConvertTo-Json -Depth 5 | Set-Content $originalCacheFile
 
 # Replace only the OUs in the cache object
 #$cacheObj.OUs = $validOUs
+
+# Process OUs that already have a Description (non-null, non-empty)
+foreach ($ou in $cacheObj.OUs) {
+    # Only process OUs that have a valid description (non-null)
+    if ($ou.Description -ne $null -and $ou.Description.Count -gt 0) {
+        # Use ADSI to search for the OU's full details
+        $searcher = New-Object DirectoryServices.DirectorySearcher([ADSI]"LDAP://$($ou.DistinguishedName)")
+        $searcher.PropertiesToLoad.Add("Description")
+        $searcher.PropertiesToLoad.Add("Name")
+
+        # Execute the search to retrieve the full details
+        $results = $searcher.FindOne()
+
+        # If results are found, update the OU object with the retrieved description
+        if ($results) {
+            $description = $results.Properties["Description"]
+            $name = $results.Properties["Name"]
+
+            # If no description found, set it to empty array
+            if (-not $description) {
+                $description = @()
+            }
+
+            # Update the OU object in the cache
+            $ou.Description = $description
+            $ou.Name = $name
+        }
+    }
+}
+
 
 # Save optimized cache as AD_Cache.json
 $cacheObj | ConvertTo-Json -Depth 12 | Set-Content $cacheFile
