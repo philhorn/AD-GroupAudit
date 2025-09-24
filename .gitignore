@@ -1,0 +1,27 @@
+# Ignore cache and reports folders
+/Cache/
+/Reports/
+/Logs/
+
+# Ignore csv output files
+*.csv
+
+# Ignore log files
+*.log
+
+# Optional: Ignore temporary or backup files
+*.tmp
+*.bak
+*.swp
+~$*
+
+# Ignore PowerShell history or state files
+*.pshistory
+*.ps1xml
+
+# Ignore VSCode settings (if using VSCode)
+.vscode/
+
+# Ignore system files
+.DS_Store
+Thumbs.db
