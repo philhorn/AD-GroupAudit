@@ -1,11 +1,11 @@
-. "$PSScriptRoot\Common.ps1"
-$logPath = "$PSScriptRoot\..\Logs\AD_ErrorLog.csv"
+#. "$PSScriptRoot\Scripts\Common.ps1"
+$logPath = "$PSScriptRoot\Logs\AD_ErrorLog.csv"
 Write-Host "Running Audit. DryRun: $DryRun FromGUI: $FromGUI"
 
-Test-CacheFreshness -ScriptRoot $PSScriptRoot -FromGUI:$FromGUI
+#Test-CacheFreshness -ScriptRoot $PSScriptRoot -FromGUI:$FromGUI
 
 # Reload the cache from file after freshness check
-$cacheFile = "$PSScriptRoot\..\Cache\AD_Cache.json"
+$cacheFile = "$PSScriptRoot\Cache\AD_Cache.json"
 if (Test-Path $cacheFile) {
     $cacheObj = Get-Content $cacheFile | ConvertFrom-Json
     $OUCache = $cacheObj.OUs
@@ -67,4 +67,4 @@ foreach ($user in $UserCache) {
     }
 }
 
-$results | Export-Csv -Path "$PSScriptRoot\..\Reports\AD_GroupAudit_Report.csv" -NoTypeInformation
+$results | Export-Csv -Path "$PSScriptRoot\Reports\AD_GroupAudit_Report.csv" -NoTypeInformation
