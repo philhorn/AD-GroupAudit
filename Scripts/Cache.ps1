@@ -66,7 +66,8 @@ foreach ($ou in $cacheObj.OUs) {
 
             # Update the OU object in the cache
             $ou.Description = $description
-            $ou.Name = $name
+          #Don't rename the Name field
+          #  $ou.Name = $name
         }
     }
 }
